@@ -18,66 +18,107 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+
+	"github.com/openshift/ocm-container/pkg/logcfg"
 )
 
-var cfgFile string
+var (
+	// The path to the config file, built later or set via var
+	cfgFile string
 
-// rootCmd represents the base command when called without any subcommands
-var rootCmd = &cobra.Command{
-	Use:   "occ",
-	Short: "OCM Container - A container-based workflow for SRE-ing OpenShift",
-	Long:  `OCM Container v2 - This application contains the configuration manipulation and container runtime launcher for managing OpenShift clusters`,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	// Run: func(cmd *cobra.Command, args []string) { },
-}
+	// the config file read in, for debug log printing
+	readInConfig string
 
-// Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
-func Execute() {
-	err := rootCmd.Execute()
-	if err != nil {
-		os.Exit(1)
+	// The environment variable prefix of all environment variables bound to our command line flags.
+	// For example, --number is bound to PREFIX_NUMBER.
+	envPrefix = "OCC"
+
+	// The verbosity level for logs
+	verbosity string
+)
+
+// NewRootCmd creates an instance of a new rootCmd for bootstrapping the application
+func NewRootCmd() *cobra.Command {
+	var rootCmd = &cobra.Command{
+		Use:   "occ",
+		Short: "OCM Container - A container-based workflow for SRE-ing OpenShift",
+		Long:  `OCM Container v2 - This application contains the configuration manipulation and container runtime launcher for managing OpenShift clusters`,
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			initConfig(cmd)
+			logcfg.ToggleDebug(verbosity, cmd.Flags().Changed("verbosity"))
+			if readInConfig != "" {
+				log.Debug("Config read in from: ", readInConfig)
+			}
+		},
+		// Uncomment the following line if your bare application
+		// has an action associated with it:
+		Run: func(cmd *cobra.Command, args []string) {
+			log.Info("verbose ", verbosity)
+			log.Info("Info Log")
+			log.Debug("Debug Log")
+			log.Trace("Trace Log")
+			log.Error("testerr")
+			log.Warn("warning")
+		},
 	}
-}
 
-func init() {
-	cobra.OnInitialize(initConfig)
-
-	// Here you will define your flags and configuration settings.
-	// Cobra supports persistent flags, which, if defined here,
-	// will be global for your application.
-
+	// Allows overwriting the default config file location
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.occ.yaml)")
 
-	// Cobra also supports local flags, which will only run
-	// when this action is called directly.
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	// Defines the logging verbosity level.  Default is set to 'warn'.
+	rootCmd.PersistentFlags().StringVarP(&verbosity, "verbosity", "v", "warn", "Log Level")
+
+	return rootCmd
 }
 
 // initConfig reads in config file and ENV variables if set.
-func initConfig() {
+func initConfig(cmd *cobra.Command) {
+	v := viper.New()
 	if cfgFile != "" {
 		// Use config file from the flag.
-		viper.SetConfigFile(cfgFile)
+		v.SetConfigFile(cfgFile)
 	} else {
 		// Find home directory.
 		home, err := os.UserHomeDir()
 		cobra.CheckErr(err)
 
 		// Search config in home directory with name ".projects" (without extension).
-		viper.AddConfigPath(home)
-		viper.SetConfigType("yaml")
-		viper.SetConfigName(".occ")
+		v.AddConfigPath(home)
+		v.SetConfigType("yaml")
+		v.SetConfigName(".occ")
 	}
-
-	viper.AutomaticEnv() // read in environment variables that match
-
 	// If a config file is found, read it in.
-	if err := viper.ReadInConfig(); err == nil {
-		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+	if err := v.ReadInConfig(); err == nil {
+		readInConfig = v.ConfigFileUsed()
 	}
+
+	v.SetEnvPrefix(envPrefix)
+
+	v.AutomaticEnv() // read in environment variables that match
+
+	bindFlags(cmd, v)
+}
+
+// Bind each cobra flag to its associated viper configuration (config file and environment variable)
+func bindFlags(cmd *cobra.Command, v *viper.Viper) {
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		// Environment variables can't have dashes in them, so bind them to their equivalent
+		// keys with underscores, e.g. --favorite-color to PREFIX_FAVORITE_COLOR
+		if strings.Contains(f.Name, "-") {
+			envVarSuffix := strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
+			v.BindEnv(f.Name, fmt.Sprintf("%s_%s", envPrefix, envVarSuffix))
+		}
+
+		// Apply the viper config value to the flag when the flag is not set and viper has a value
+		if !f.Changed && v.IsSet(f.Name) {
+			val := v.Get(f.Name)
+			cmd.Flags().Set(f.Name, fmt.Sprintf("%v", val))
+		}
+	})
 }

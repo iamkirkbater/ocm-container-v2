@@ -15,8 +15,16 @@ limitations under the License.
 */
 package main
 
-import "github.com/openshift/ocm-container/cmd"
+import (
+	"os"
+
+	"github.com/openshift/ocm-container/cmd"
+)
 
 func main() {
-	cmd.Execute()
+	rootCmd := cmd.NewRootCmd()
+	err := rootCmd.Execute()
+	if err != nil {
+		os.Exit(1)
+	}
 }
