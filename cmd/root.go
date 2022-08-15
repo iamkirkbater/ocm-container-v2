@@ -74,6 +74,8 @@ func NewRootCmd() *cobra.Command {
 	// Defines the logging verbosity level.  Default is set to 'warn'.
 	rootCmd.PersistentFlags().StringVarP(&verbosity, "verbosity", "v", "warn", "Log Level")
 
+	rootCmd.AddCommand(NewVersionCmd())
+
 	return rootCmd
 }
 
@@ -121,4 +123,9 @@ func bindFlags(cmd *cobra.Command, v *viper.Viper) {
 			cmd.Flags().Set(f.Name, fmt.Sprintf("%v", val))
 		}
 	})
+}
+
+// check for updates
+func updateCheck(cmd *cobra.Command, v *viper.Viper) {
+
 }

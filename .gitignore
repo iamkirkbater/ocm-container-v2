@@ -1,3 +1,5 @@
 occ
 ocm-container
 bin/*
+
+dist/
