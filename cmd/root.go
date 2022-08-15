@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,27 +17,24 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"strings"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
+	"go.szostok.io/version"
+	"go.szostok.io/version/extension"
+	"go.szostok.io/version/term"
+	"go.szostok.io/version/upgrade"
+
+	"github.com/openshift/ocm-container/pkg/config"
 	"github.com/openshift/ocm-container/pkg/logcfg"
 )
 
 var (
 	// The path to the config file, built later or set via var
 	cfgFile string
-
-	// the config file read in, for debug log printing
-	readInConfig string
-
-	// The environment variable prefix of all environment variables bound to our command line flags.
-	// For example, --number is bound to PREFIX_NUMBER.
-	envPrefix = "OCC"
 
 	// The verbosity level for logs
 	verbosity string
@@ -50,11 +47,17 @@ func NewRootCmd() *cobra.Command {
 		Short: "OCM Container - A container-based workflow for SRE-ing OpenShift",
 		Long:  `OCM Container v2 - This application contains the configuration manipulation and container runtime launcher for managing OpenShift clusters`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			initConfig(cmd)
+			config.InitConfig(cmd, cfgFile)
+
 			logcfg.ToggleDebug(verbosity, cmd.Flags().Changed("verbosity"))
-			if readInConfig != "" {
-				log.Debug("Config read in from: ", readInConfig)
+
+			// We're specifically checking this after the logcfg toggle so we don't always
+			// print the debug line if there's a config file
+			if config.Config.ConfigFileUsed() != "" {
+				log.Debug("Config read in from: ", config.Config.ConfigFileUsed())
 			}
+
+			checkForUpdates(cmd, config.Config)
 		},
 		// Uncomment the following line if your bare application
 		// has an action associated with it:
@@ -74,51 +77,43 @@ func NewRootCmd() *cobra.Command {
 	// Defines the logging verbosity level.  Default is set to 'warn'.
 	rootCmd.PersistentFlags().StringVarP(&verbosity, "verbosity", "v", "warn", "Log Level")
 
+	rootCmd.AddCommand(extension.NewVersionCobraCmd())
+
 	return rootCmd
 }
 
-// initConfig reads in config file and ENV variables if set.
-func initConfig(cmd *cobra.Command) {
-	v := viper.New()
-	if cfgFile != "" {
-		// Use config file from the flag.
-		v.SetConfigFile(cfgFile)
-	} else {
-		// Find home directory.
-		home, err := os.UserHomeDir()
-		cobra.CheckErr(err)
+func checkForUpdates(cmd *cobra.Command, config *viper.Viper) {
+	gh := upgrade.NewGitHubDetector(
+		"iamkirkbater", "ocm-container-v2",
+		upgrade.WithMinElapseTimeForRecheck(7*24*time.Hour),
+	)
 
-		// Search config in home directory with name ".projects" (without extension).
-		v.AddConfigPath(home)
-		v.SetConfigType("yaml")
-		v.SetConfigName(".occ")
-	}
-	// If a config file is found, read it in.
-	if err := v.ReadInConfig(); err == nil {
-		readInConfig = v.ConfigFileUsed()
-	}
-
-	v.SetEnvPrefix(envPrefix)
-
-	v.AutomaticEnv() // read in environment variables that match
-
-	bindFlags(cmd, v)
-}
-
-// Bind each cobra flag to its associated viper configuration (config file and environment variable)
-func bindFlags(cmd *cobra.Command, v *viper.Viper) {
-	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		// Environment variables can't have dashes in them, so bind them to their equivalent
-		// keys with underscores, e.g. --favorite-color to PREFIX_FAVORITE_COLOR
-		if strings.Contains(f.Name, "-") {
-			envVarSuffix := strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
-			v.BindEnv(f.Name, fmt.Sprintf("%s_%s", envPrefix, envVarSuffix))
-		}
-
-		// Apply the viper config value to the flag when the flag is not set and viper has a value
-		if !f.Changed && v.IsSet(f.Name) {
-			val := v.Get(f.Name)
-			cmd.Flags().Set(f.Name, fmt.Sprintf("%v", val))
-		}
+	rel, err := gh.LookForGreaterRelease(upgrade.LookForGreaterReleaseInput{
+		CurrentVersion: version.Get().Version,
 	})
+	if err != nil {
+		return
+	}
+
+	if !rel.Found {
+		// no new version available
+		return
+	}
+	if rel.ReleaseInfo.IsFromCache {
+		// The time for re-checking for a new release has not elapsed yet,
+		// so the cached version is returned.
+		return
+	}
+
+	// Print the upgrade notice on a standard error channel (stderr).
+	// As a result, output processing for a given command works properly even
+	// if the upgrade notice is displayed.
+	//
+	// Use 'term.IsSmart' so that the renderer can disable colored output for non-tty output streams.
+	out, err := gh.Render(rel.ReleaseInfo, term.IsSmart(cmd.OutOrStderr()))
+	if err != nil {
+		return
+	}
+
+	fmt.Fprint(cmd.OutOrStderr(), out)
 }
