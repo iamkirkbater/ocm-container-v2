@@ -59,7 +59,15 @@ func CheckForUpdates(updateConfig *UpdateConfig) (*UpdateResponse, error) {
 	return updateResp, nil
 }
 
-func (u *UpdateResponse) HasAvailableUpdate(v string) bool {
+func (u *UpdateResponse) HasAvailableUpdate() bool {
+	if !semver.IsValid(u.LatestVersion) {
+		log.Warn("Cannot convert latest version tag to semver for comparison.")
+		return false
+	}
+	if !semver.IsValid(u.CurrentVersion) {
+		log.Warn("Cannot convert current version tag to semver for comparison.")
+		return false
+	}
 	if semver.Compare(u.LatestVersion, u.CurrentVersion) > 1 {
 		return true
 	}

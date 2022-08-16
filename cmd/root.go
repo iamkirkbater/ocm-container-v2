@@ -25,6 +25,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
+	"github.com/openshift/ocm-container/cmd/version"
 	"github.com/openshift/ocm-container/pkg/logcfg"
 )
 
@@ -74,7 +75,7 @@ func NewRootCmd() *cobra.Command {
 	// Defines the logging verbosity level.  Default is set to 'warn'.
 	rootCmd.PersistentFlags().StringVarP(&verbosity, "verbosity", "v", "warn", "Log Level")
 
-	rootCmd.AddCommand(NewVersionCmd())
+	rootCmd.AddCommand(version.NewVersionCmd())
 
 	return rootCmd
 }
