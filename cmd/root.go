@@ -19,26 +19,20 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
 
 	"github.com/openshift/ocm-container/cmd/version"
+	"github.com/openshift/ocm-container/pkg/config"
 	"github.com/openshift/ocm-container/pkg/logcfg"
+	"github.com/openshift/ocm-container/pkg/updates"
 )
 
 var (
 	// The path to the config file, built later or set via var
 	cfgFile string
-
-	// the config file read in, for debug log printing
-	readInConfig string
-
-	// The environment variable prefix of all environment variables bound to our command line flags.
-	// For example, --number is bound to PREFIX_NUMBER.
-	envPrefix = "OCC"
 
 	// The verbosity level for logs
 	verbosity string
@@ -51,11 +45,17 @@ func NewRootCmd() *cobra.Command {
 		Short: "OCM Container - A container-based workflow for SRE-ing OpenShift",
 		Long:  `OCM Container v2 - This application contains the configuration manipulation and container runtime launcher for managing OpenShift clusters`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			initConfig(cmd)
+			config.InitConfig(cmd, cfgFile)
+
 			logcfg.ToggleDebug(verbosity, cmd.Flags().Changed("verbosity"))
-			if readInConfig != "" {
-				log.Debug("Config read in from: ", readInConfig)
+
+			// We're specifically checking this after the logcfg toggle so we don't always
+			// print the debug line if there's a config file
+			if config.Config.ConfigFileUsed() != "" {
+				log.Debug("Config read in from: ", config.Config.ConfigFileUsed())
 			}
+
+			checkForUpdates(cmd)
 		},
 		// Uncomment the following line if your bare application
 		// has an action associated with it:
@@ -80,53 +80,105 @@ func NewRootCmd() *cobra.Command {
 	return rootCmd
 }
 
-// initConfig reads in config file and ENV variables if set.
-func initConfig(cmd *cobra.Command) {
-	v := viper.New()
-	if cfgFile != "" {
-		// Use config file from the flag.
-		v.SetConfigFile(cfgFile)
-	} else {
-		// Find home directory.
-		home, err := os.UserHomeDir()
-		cobra.CheckErr(err)
-
-		// Search config in home directory with name ".projects" (without extension).
-		v.AddConfigPath(home)
-		v.SetConfigType("yaml")
-		v.SetConfigName(".occ")
-	}
-	// If a config file is found, read it in.
-	if err := v.ReadInConfig(); err == nil {
-		readInConfig = v.ConfigFileUsed()
-	}
-
-	v.SetEnvPrefix(envPrefix)
-
-	v.AutomaticEnv() // read in environment variables that match
-
-	bindFlags(cmd, v)
-}
-
-// Bind each cobra flag to its associated viper configuration (config file and environment variable)
-func bindFlags(cmd *cobra.Command, v *viper.Viper) {
-	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		// Environment variables can't have dashes in them, so bind them to their equivalent
-		// keys with underscores, e.g. --favorite-color to PREFIX_FAVORITE_COLOR
-		if strings.Contains(f.Name, "-") {
-			envVarSuffix := strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
-			v.BindEnv(f.Name, fmt.Sprintf("%s_%s", envPrefix, envVarSuffix))
-		}
-
-		// Apply the viper config value to the flag when the flag is not set and viper has a value
-		if !f.Changed && v.IsSet(f.Name) {
-			val := v.Get(f.Name)
-			cmd.Flags().Set(f.Name, fmt.Sprintf("%v", val))
-		}
-	})
-}
-
 // check for updates
-func updateCheck(cmd *cobra.Command, v *viper.Viper) {
+func checkForUpdates(cmd *cobra.Command) {
+	// if we're in the version check command, don't run the update check
+	if cmd.Parent() != nil && cmd.Parent().Name() == "version" && cmd.Name() == "check" {
+		return
+	}
 
+	// check to see if update checking is disabled and exit if it is
+	if config.Config.GetBool("disable-update-checks") {
+		log.Trace("Automatic Update Checking Disabled.")
+		return
+	}
+
+	// check to see when the last time we checked for updates
+	log.Trace("Getting last time we checked for updates.")
+	userConfigDir, err := os.UserConfigDir()
+	if err != nil {
+		log.Trace("Could not get UserConfigDir while checking for updates")
+		return
+	}
+
+	// if the config dir doesn't exist for occ
+	occConfigDir := fmt.Sprintf("%s/%s", userConfigDir, "occ")
+	if _, err := os.Stat(occConfigDir); os.IsNotExist(err) {
+		log.Tracef("Creating config dir for occ at %s", occConfigDir)
+		err := os.Mkdir(occConfigDir, 0750)
+		if err != nil && !os.IsExist(err) {
+			log.Trace("Error creating config dir")
+			return
+		}
+		log.Trace("Config dir created")
+	}
+
+	// Create the time now object for comparison, as
+	// well as the string time to write.
+	now := time.Now().UTC()
+	nowStr, err := now.MarshalText()
+	if err != nil {
+		log.Tracef("Cannot marshal time %s to text", now)
+	}
+
+	// if it's been more than 6 days or the file is empty
+	// then check for updates. If the file doesn't exist,
+	// exit without checking so we don't run the update check
+	// every time if we fail to create the file. Only report
+	// if there are updates, and print to stderr.
+	updateTimeFile := fmt.Sprintf("%s/%s", occConfigDir, ".last-update-check")
+	if _, err := os.Stat(updateTimeFile); os.IsNotExist(err) {
+		log.Tracef("Creating update check file at %s", updateTimeFile)
+		err = os.WriteFile(updateTimeFile, nowStr, 0660)
+		if err != nil {
+			log.Trace("Error writing current time to update check file. ", err)
+			return
+		}
+		return
+	}
+
+	updateTimeRaw, err := os.ReadFile(updateTimeFile)
+	if err != nil {
+		log.Trace("There was an error reading the update time file. ", err)
+	}
+	updateTimeStr := strings.TrimSuffix(string(updateTimeRaw), "\n")
+	updateTime, err := time.Parse(time.RFC3339, updateTimeStr)
+	if err != nil {
+		log.Trace("There was an error parsing the time from the update file. Rewriting with current time.")
+		err = os.WriteFile(updateTimeFile, nowStr, 0660)
+		if err != nil {
+			log.Trace("Error writing current time to update check file. ", err)
+			return
+		}
+	}
+
+	err = os.WriteFile(updateTimeFile, nowStr, 0660)
+	if err != nil {
+		log.Trace("Error writing current time to update check file. ", err)
+		return
+	}
+
+	duration := now.Sub(updateTime)
+	log.Tracef("Last checked for updates %v ago", duration)
+
+	if duration > (6 * 24 * time.Hour) {
+		log.Trace("Checking for binary updates.")
+
+		updateConfig := &updates.UpdateConfig{
+			GithubReleaseEndpoint: config.Config.GetString("release-endpoint"),
+		}
+		updateResp, err := updates.CheckForUpdates(updateConfig)
+		if err != nil {
+			log.Trace("Error checking for updates: ", err)
+			return
+		}
+		hasUpdates, err := updateResp.HasAvailableUpdate()
+		if err != nil {
+			log.Trace("Error checking for updates: ", err)
+			return
+		}
+		if hasUpdates {
+			fmt.Fprintln(os.Stderr, fmt.Sprintf("Update: %s is available at %s", updateResp.LatestVersion, updateResp.UpdateUrl))
+		}
+	}
 }

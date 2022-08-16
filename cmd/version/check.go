@@ -3,6 +3,7 @@ package version
 import (
 	"fmt"
 
+	"github.com/openshift/ocm-container/pkg/config"
 	"github.com/openshift/ocm-container/pkg/updates"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -14,32 +15,37 @@ func NewCheckCmd() *cobra.Command {
 		Use:   "check",
 		Short: "Checks for updates",
 		Long:  `Checks the release API for updates`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			updateResp, err := RunUpdateCheck()
+		Run: func(cmd *cobra.Command, args []string) {
+			updateResp, err := runUpdateCheck()
 			if err != nil {
-				return err
+				fmt.Println(err)
+				return
 			}
 
-			if updateResp.HasAvailableUpdate() {
+			hasUpdates, err := updateResp.HasAvailableUpdate()
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+
+			if hasUpdates {
 				fmt.Printf("An update is available at %s\n", updateResp.UpdateUrl)
-				return nil
+				return
 			}
-
-			fmt.Println("No updates are available.")
-			return nil
+			fmt.Println("No updates available.")
 		},
 	}
 
 	return checkCmd
 }
 
-func RunUpdateCheck() (*updates.UpdateResponse, error) {
+func runUpdateCheck() (*updates.UpdateResponse, error) {
 	updateConfig := &updates.UpdateConfig{
-		GithubReleaseEndpoint: "https://api.github.com/repos/iamkirkbater/ocm-container-v2/releases/latest",
+		GithubReleaseEndpoint: config.Config.GetString("release-endpoint"),
 	}
 	updateResp, err := updates.CheckForUpdates(updateConfig)
 	if err != nil {
-		log.Warn("Error fetching Updates.")
+		log.Error("Error fetching Updates.")
 		return nil, err
 	}
 	return updateResp, nil

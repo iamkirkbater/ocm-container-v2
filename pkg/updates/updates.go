@@ -2,6 +2,7 @@ package updates
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 
@@ -59,17 +60,15 @@ func CheckForUpdates(updateConfig *UpdateConfig) (*UpdateResponse, error) {
 	return updateResp, nil
 }
 
-func (u *UpdateResponse) HasAvailableUpdate() bool {
+func (u *UpdateResponse) HasAvailableUpdate() (bool, error) {
 	if !semver.IsValid(u.LatestVersion) {
-		log.Warn("Cannot convert latest version tag to semver for comparison.")
-		return false
+		return false, fmt.Errorf("Cannot convert latest version tag to semver for comparison.")
 	}
 	if !semver.IsValid(u.CurrentVersion) {
-		log.Warn("Cannot convert current version tag to semver for comparison.")
-		return false
+		return false, fmt.Errorf("Cannot convert current version tag to semver for comparison.")
 	}
 	if semver.Compare(u.LatestVersion, u.CurrentVersion) > 1 {
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }
