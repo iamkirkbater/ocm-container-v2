@@ -30,8 +30,10 @@ func InitConfig(cmd *cobra.Command, cfgFile string) {
 		home, err := os.UserHomeDir()
 		cobra.CheckErr(err)
 
-		// Search config in home directory with name ".projects" (without extension).
-		v.AddConfigPath(home)
+		// Search config in $HOME/.config directory with name ".occ" (without extension).
+		// explicitly define this instead of using os.UserConfigDir to keep a consistent location
+		// for both Linux and MacOS users.
+		v.AddConfigPath(fmt.Sprintf("%s/.config/", home))
 		v.SetConfigType("yaml")
 		v.SetConfigName(".occ")
 	}

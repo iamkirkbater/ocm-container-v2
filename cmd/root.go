@@ -28,8 +28,8 @@ import (
 	"go.szostok.io/version/term"
 	"go.szostok.io/version/upgrade"
 
-	"github.com/openshift/ocm-container/pkg/config"
-	"github.com/openshift/ocm-container/pkg/logcfg"
+	"github.com/openshift/occ/pkg/config"
+	"github.com/openshift/occ/pkg/logcfg"
 )
 
 var (
@@ -44,8 +44,8 @@ var (
 func NewRootCmd() *cobra.Command {
 	var rootCmd = &cobra.Command{
 		Use:   "occ",
-		Short: "OCM Container - A container-based workflow for SRE-ing OpenShift",
-		Long:  `OCM Container v2 - This application contains the configuration manipulation and container runtime launcher for managing OpenShift clusters`,
+		Short: "OpenShift Command Center - A container-based workflow for SRE-ing OpenShift",
+		Long:  `OpenShift Command Center - This application contains the configuration manipulation and container runtime launcher for managing OpenShift clusters`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			config.InitConfig(cmd, cfgFile)
 
