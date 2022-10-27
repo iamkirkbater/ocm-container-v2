@@ -17,7 +17,18 @@ var (
 	// The environment variable prefix of all environment variables bound to our command line flags.
 	// For example, --number is bound to PREFIX_NUMBER.
 	envPrefix = "OCC"
+
+	// DefaultConfigFileLocation is an exported value to use for help docs around the CLI utility
+	DefaultConfigFileLocation string
 )
+
+func init() {
+	// Find home directory.
+	home, err := os.UserHomeDir()
+	cobra.CheckErr(err)
+	configPath := fmt.Sprintf("%s/.config/occ", home)
+	DefaultConfigFileLocation = configPath
+}
 
 // InitConfig reads in config file and ENV variables if set.
 func InitConfig(cmd *cobra.Command, cfgFile string) {
@@ -26,14 +37,12 @@ func InitConfig(cmd *cobra.Command, cfgFile string) {
 		// Use config file from the flag.
 		v.SetConfigFile(cfgFile)
 	} else {
-		// Find home directory.
-		home, err := os.UserHomeDir()
-		cobra.CheckErr(err)
-
-		// Search config in home directory with name ".projects" (without extension).
-		v.AddConfigPath(home)
+		// Search config in $HOME/.config/occ directory with name "config.yaml".
+		// explicitly define this instead of using os.UserConfigDir to keep a consistent location
+		// for both Linux and MacOS users.
+		v.AddConfigPath(DefaultConfigFileLocation)
 		v.SetConfigType("yaml")
-		v.SetConfigName(".occ")
+		v.SetConfigName("config")
 	}
 	// If a config file is found, read it in.
 	v.ReadInConfig()
