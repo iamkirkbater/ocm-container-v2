@@ -45,7 +45,7 @@ func InitConfig(cmd *cobra.Command, cfgFile string) {
 		v.SetConfigName("config")
 	}
 	// If a config file is found, read it in.
-	v.ReadInConfig()
+	_ = v.ReadInConfig()
 
 	// Set any necessary defaults for things that may not always be set via flags
 	setDefaults(v)
