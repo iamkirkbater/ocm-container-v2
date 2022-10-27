@@ -72,7 +72,7 @@ func NewRootCmd() *cobra.Command {
 	}
 
 	// Allows overwriting the default config file location
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.occ.yaml)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", fmt.Sprintf("%s/config.yaml", config.DefaultConfigFileLocation), "config file location")
 
 	// Defines the logging verbosity level.  Default is set to 'warn'.
 	rootCmd.PersistentFlags().StringVarP(&verbosity, "verbosity", "v", "warn", "Log Level")
