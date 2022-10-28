@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -18,15 +19,21 @@ var (
 	// For example, --number is bound to PREFIX_NUMBER.
 	envPrefix = "OCC"
 
+	// The User's Home Directory
+	homeDir string
+
 	// DefaultConfigFileLocation is an exported value to use for help docs around the CLI utility
 	DefaultConfigFileLocation string
 )
 
 func init() {
 	// Find home directory.
-	home, err := os.UserHomeDir()
+	var err error
+	homeDir, err = os.UserHomeDir()
 	cobra.CheckErr(err)
-	configPath := fmt.Sprintf("%s/.config/occ", home)
+
+	// Look here for default config file. Can be overridden by end-user via flag
+	configPath := fmt.Sprintf("%s/.config/occ", homeDir)
 	DefaultConfigFileLocation = configPath
 }
 
@@ -65,6 +72,27 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("release-endpoint", "https://api.github.com/repos/iamkirkbater/ocm-container-v2/releases/latest")
 	v.SetDefault("disable-update-checks", false)
 	v.SetDefault("container-image-tag", "latest")
+
+	// Set Defaults for various platforms
+	setLinuxDefaults(v)
+	setMacDefaults(v)
+}
+
+func setLinuxDefaults(v *viper.Viper) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+
+	v.SetDefault("podman-socket", "unix://run/podman/podman.sock")
+}
+
+func setMacDefaults(v *viper.Viper) {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+
+	// Assumes podman machine default. could potentially change this in the future.
+	v.SetDefault("podman-socket", fmt.Sprintf("%s/.local/share/containers/podman/machine/podman-machine-default/podman.sock", homeDir))
 }
 
 // Bind each cobra flag to its associated viper configuration (config file and environment variable)
