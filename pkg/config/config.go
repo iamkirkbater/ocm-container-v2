@@ -64,6 +64,7 @@ func InitConfig(cmd *cobra.Command, cfgFile string) {
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("release-endpoint", "https://api.github.com/repos/iamkirkbater/ocm-container-v2/releases/latest")
 	v.SetDefault("disable-update-checks", false)
+	v.SetDefault("container-image-tag", "latest")
 }
 
 // Bind each cobra flag to its associated viper configuration (config file and environment variable)

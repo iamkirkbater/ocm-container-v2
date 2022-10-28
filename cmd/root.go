@@ -17,8 +17,9 @@ package cmd
 
 import (
 	"fmt"
-	initCmd "github.com/openshift/occ/cmd/init"
 	"time"
+
+	initCmd "github.com/openshift/occ/cmd/init"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -29,6 +30,7 @@ import (
 	"go.szostok.io/version/term"
 	"go.szostok.io/version/upgrade"
 
+	"github.com/openshift/occ/cmd/build"
 	"github.com/openshift/occ/pkg/config"
 	"github.com/openshift/occ/pkg/logcfg"
 )
@@ -79,6 +81,7 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.PersistentFlags().StringVarP(&verbosity, "verbosity", "v", "warn", "Log Level")
 
 	rootCmd.AddCommand(extension.NewVersionCobraCmd(), initCmd.NewInitCmd())
+	rootCmd.AddCommand(build.NewBuildCmd())
 
 	return rootCmd
 }
