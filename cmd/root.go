@@ -17,6 +17,7 @@ package cmd
 
 import (
 	"fmt"
+	initCmd "github.com/openshift/occ/cmd/init"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -49,7 +50,7 @@ func NewRootCmd() *cobra.Command {
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			config.InitConfig(cmd, cfgFile)
 
-			logcfg.ToggleDebug(verbosity, cmd.Flags().Changed("verbosity"))
+			_ = logcfg.ToggleDebug(verbosity, cmd.Flags().Changed("verbosity"))
 
 			// We're specifically checking this after the logcfg toggle so we don't always
 			// print the debug line if there's a config file
@@ -77,7 +78,7 @@ func NewRootCmd() *cobra.Command {
 	// Defines the logging verbosity level.  Default is set to 'warn'.
 	rootCmd.PersistentFlags().StringVarP(&verbosity, "verbosity", "v", "warn", "Log Level")
 
-	rootCmd.AddCommand(extension.NewVersionCobraCmd())
+	rootCmd.AddCommand(extension.NewVersionCobraCmd(), initCmd.NewInitCmd())
 
 	return rootCmd
 }
@@ -115,5 +116,5 @@ func checkForUpdates(cmd *cobra.Command, config *viper.Viper) {
 		return
 	}
 
-	fmt.Fprint(cmd.OutOrStderr(), out)
+	_, _ = fmt.Fprint(cmd.OutOrStderr(), out)
 }
