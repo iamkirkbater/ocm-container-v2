@@ -83,7 +83,7 @@ func setupConfig(*cobra.Command, []string) {
 		log.Fatal("Writing the config failed")
 	}
 
-	fmt.Printf("Config file has been written to %v:\n", configPath)
+	fmt.Printf("Config file has been written to %v", configPath)
 }
 
 type reader interface {
