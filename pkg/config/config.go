@@ -92,7 +92,7 @@ func setMacDefaults(v *viper.Viper) {
 	}
 
 	// Assumes podman machine default. could potentially change this in the future.
-	v.SetDefault("podman-socket", fmt.Sprintf("%s/.local/share/containers/podman/machine/podman-machine-default/podman.sock", homeDir))
+	v.SetDefault("podman-socket", fmt.Sprintf("unix://%s/.local/share/containers/podman/machine/podman-machine-default/podman.sock", homeDir))
 }
 
 // Bind each cobra flag to its associated viper configuration (config file and environment variable)
