@@ -20,3 +20,10 @@ When Contributing to occ, please keep the following practices in mind:
     1. When we use the logging library to print debug or other output, it's automatically written to stderr (and makes the output parsable by next processes) and the end-user can hide any log levels they don't want to see with the -v flag.
 1. Use viper for any user-configurable flags or defaults
     1. This lets the end-user add things to their config file that otherwise would be flags they always want to run, or allows them to set multiple config files for separate scenarios, etc.  Viper also gives us automatic ENV var parsing for the flags as well, so the arg parsing order ends up being `viper defaults -> config file -> env vars -> arg flags`.
+
+
+When contributing on MacOS, in order to build the binary you will also need the following package installed from brew:
+
+```
+brew install gpgme
+```
