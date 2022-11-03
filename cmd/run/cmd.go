@@ -8,14 +8,15 @@ import (
 	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/pkg/bindings"
 	"github.com/containers/podman/v4/pkg/bindings/containers"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/pkg/errorhandling"
 	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/opencontainers/runtime-spec/specs-go"
-	initCmd "github.com/openshift/occ/cmd/init"
 	"github.com/openshift/occ/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"io"
+	"io/fs"
 	"os"
 	"runtime"
 	"strings"
@@ -26,6 +27,58 @@ var (
 	tag                string
 	disableConsolePort bool
 )
+
+type fileSystemWrite interface {
+	MkdirTemp(string, string) (string, error)
+	RemoveAll(string) error
+	Create(string) (*os.File, error)
+	Fprintln(w io.Writer, a ...any) (n int, err error)
+}
+
+type osFileSystemWrite struct{}
+
+func (osFileSystemWrite) MkdirTemp(dir string, pattern string) (string, error) {
+	return os.MkdirTemp(dir, pattern)
+}
+func (osFileSystemWrite) RemoveAll(path string) error          { return os.RemoveAll(path) }
+func (osFileSystemWrite) Create(name string) (*os.File, error) { return os.Create(name) }
+func (osFileSystemWrite) Fprintln(w io.Writer, a ...any) (n int, err error) {
+	return fmt.Fprintln(w, a...)
+}
+
+type container interface {
+	Inspect(ctx context.Context, nameOrID string, options *containers.InspectOptions) (*define.InspectContainerData, error)
+	CopyFromArchive(ctx context.Context, nameOrID string, path string, reader io.Reader) (entities.ContainerCopyFunc, error)
+}
+
+type podmanContainer struct{}
+
+func (podmanContainer) Inspect(ctx context.Context, nameOrID string, options *containers.InspectOptions) (*define.InspectContainerData, error) {
+	return containers.Inspect(ctx, nameOrID, options)
+}
+func (podmanContainer) CopyFromArchive(ctx context.Context, nameOrID string, path string, reader io.Reader) (entities.ContainerCopyFunc, error) {
+	return containers.CopyFromArchive(ctx, nameOrID, path, reader)
+}
+
+type copier interface {
+	Get(root string, directory string, options buildahCopiah.GetOptions, globs []string, bulkWriter io.Writer) error
+}
+
+type builderCopier struct{}
+
+func (builderCopier) Get(root string, directory string, options buildahCopiah.GetOptions, globs []string, bulkWriter io.Writer) error {
+	return buildahCopiah.Get(root, directory, options, globs, bulkWriter)
+}
+
+type fileSystemRead interface {
+	ReadDir(name string) ([]os.DirEntry, error)
+	Stat(name string) (fs.FileInfo, error)
+}
+
+type osFileSystemRead struct{}
+
+func (osFileSystemRead) ReadDir(name string) ([]os.DirEntry, error) { return os.ReadDir(name) }
+func (osFileSystemRead) Stat(name string) (fs.FileInfo, error)      { return os.Stat(name) }
 
 func NewRunCmd() *cobra.Command {
 	var runCmd = &cobra.Command{
@@ -44,8 +97,11 @@ func NewRunCmd() *cobra.Command {
 }
 
 func runContainer(_ *cobra.Command, args []string) {
+	osFSr := osFileSystemRead{}
+	osFSw := osFileSystemWrite{}
+
 	configPath := config.Config.ConfigFileUsed()
-	if _, err := os.Stat(configPath); err != nil {
+	if _, err := osFSr.Stat(configPath); err != nil {
 		log.Fatalf(`Cannot find config file at %v. Run occ init to create one.`, configPath)
 	}
 
@@ -63,8 +119,8 @@ func runContainer(_ *cobra.Command, args []string) {
 	s.Terminal = true
 	s.Remove = true
 	s.Privileged = true
-	s.Env = makeEnvMap(args)
-	s.Mounts = makeMounts(configPath, homeDir)
+	s.Env = makeEnvMap(args, runtime.GOOS)
+	s.Mounts = makeMounts(osFSr, configPath, homeDir, "/private/tmp", runtime.GOOS)
 	s.PublishExposedPorts = !disableConsolePort
 	createResponse, err := containers.CreateWithSpec(conn, s, nil)
 	if err != nil {
@@ -78,7 +134,10 @@ func runContainer(_ *cobra.Command, args []string) {
 	}
 
 	if !disableConsolePort {
-		copyPortmap(conn, createResponse.ID)
+		err := copyPortmap(osFSw, podmanContainer{}, builderCopier{}, conn, createResponse.ID)
+		if err != nil {
+			log.Fatal("There was an error copying portmap file to the container", err)
+		}
 	}
 
 	err = containers.Attach(conn, createResponse.ID, os.Stdin, os.Stdout, os.Stderr, nil, nil)
@@ -87,11 +146,11 @@ func runContainer(_ *cobra.Command, args []string) {
 	}
 }
 
-func makeMounts(configPath string, homeDir string) []specs.Mount {
+func makeMounts(fs fileSystemRead, configPath string, homeDir string, macPrivateTempDir string, goos string) []specs.Mount {
 	mountSlice := []specs.Mount{
 		{
 			Destination: "/root/.ssh/sockets",
-			Type:        "tmpfs",
+			Type:        define.TypeTmpfs,
 		},
 		{
 			Source:      configPath,
@@ -108,13 +167,13 @@ func makeMounts(configPath string, homeDir string) []specs.Mount {
 	}
 
 	var sshAgentMount specs.Mount
-	if runtime.GOOS == "darwin" {
-		agentLocation, err := macAgentLocation()
+	if goos == "darwin" {
+		agentLocation, err := macAgentLocation(fs, macPrivateTempDir)
 		if err != nil {
 			log.Fatal("Failed to retrieve agent location", err)
 		}
 		sshAgentMount = specs.Mount{
-			Source:      "/private/tmp/" + agentLocation,
+			Source:      macPrivateTempDir + "/" + agentLocation,
 			Destination: "/tmp/ssh",
 			Options:     []string{"ro"},
 			Type:        define.TypeBind,
@@ -130,22 +189,22 @@ func makeMounts(configPath string, homeDir string) []specs.Mount {
 	mountSlice = append(mountSlice, sshAgentMount)
 
 	// Google Cloud CLI config mounting
-	if _, err := os.Stat(homeDir + "/.config/gcloud"); err == nil {
-		mountSlice = append(mountSlice, googleCliConfigMounts()...)
+	if _, err := fs.Stat(homeDir + "/.config/gcloud"); err == nil {
+		mountSlice = append(mountSlice, googleCliConfigMounts(homeDir)...)
 	}
 
 	// AWS token pull
-	if _, err := os.Stat(homeDir + "/.aws"); err == nil {
-		mountSlice = append(mountSlice, awsCredentialsMounts()...)
+	if _, err := fs.Stat(homeDir + "/.aws"); err == nil {
+		mountSlice = append(mountSlice, awsCredentialsMounts(homeDir)...)
 	}
 
-	if opsUtilsDir := config.Config.GetString(initCmd.OpsUtilsDirKey); opsUtilsDir != "" {
+	if opsUtilsDir := config.Config.GetString(config.OpsUtilsDirKey); opsUtilsDir != "" {
 		opsUtilsDirMount := specs.Mount{
 			Source:      opsUtilsDir,
 			Destination: "/root/sop-utils",
 			Type:        define.TypeBind,
 		}
-		if opsUtilsDirRw := config.Config.GetBool(initCmd.OpsUtilsDirRWKey); opsUtilsDirRw == true {
+		if opsUtilsDirRw := config.Config.GetBool(config.OpsUtilsDirRWKey); opsUtilsDirRw {
 			opsUtilsDirMount.Options = []string{"rw"}
 		} else {
 			opsUtilsDirMount.Options = []string{"ro"}
@@ -155,7 +214,7 @@ func makeMounts(configPath string, homeDir string) []specs.Mount {
 	}
 
 	pagerdutyTokenFile := ".config/pagerduty-cli/config.json"
-	if _, err := os.Stat(homeDir + pagerdutyTokenFile); err == nil {
+	if _, err := fs.Stat(homeDir + "/" + pagerdutyTokenFile); err == nil {
 		mountSlice = append(mountSlice, specs.Mount{
 			Source:      homeDir + "/" + pagerdutyTokenFile,
 			Destination: "/root/" + pagerdutyTokenFile,
@@ -166,18 +225,18 @@ func makeMounts(configPath string, homeDir string) []specs.Mount {
 	return mountSlice
 }
 
-func makeEnvMap(args []string) map[string]string {
+func makeEnvMap(args []string, goos string) map[string]string {
 	envMap := map[string]string{}
 
-	if ocmUser := config.Config.GetString(initCmd.OCMUserKey); ocmUser != "" {
+	if ocmUser := config.Config.GetString(config.OCMUserKey); ocmUser != "" {
 		envMap["USER"] = ocmUser
 	}
 
-	if offlineAccessToken := config.Config.GetString(initCmd.OfflineAccessTokenKey); offlineAccessToken != "" {
+	if offlineAccessToken := config.Config.GetString(config.OfflineAccessTokenKey); offlineAccessToken != "" {
 		envMap["OFFLINE_ACCESS_TOKEN"] = offlineAccessToken
 	}
 
-	if ocmUrl := config.Config.GetString("ocm_url"); ocmUrl != "" {
+	if ocmUrl := config.Config.GetString(config.OCMUrlKey); ocmUrl != "" {
 		envMap["OCM_URL"] = ocmUrl
 	}
 
@@ -186,7 +245,7 @@ func makeEnvMap(args []string) map[string]string {
 	}
 
 	var sshAuthSock string
-	if runtime.GOOS == "darwin" {
+	if goos == "darwin" {
 		sshAuthSock = "/tmp/ssh/Listeners"
 	} else {
 		sshAuthSock = "/tmp/ssh.sock"
@@ -195,8 +254,7 @@ func makeEnvMap(args []string) map[string]string {
 	return envMap
 }
 
-func googleCliConfigMounts() []specs.Mount {
-	homeDir, _ := os.UserHomeDir()
+func googleCliConfigMounts(homeDir string) []specs.Mount {
 	return []specs.Mount{
 		{
 			Source:      homeDir + "/.config/gcloud/active_config",
@@ -222,8 +280,7 @@ func googleCliConfigMounts() []specs.Mount {
 	}
 }
 
-func awsCredentialsMounts() []specs.Mount {
-	homeDir, _ := os.UserHomeDir()
+func awsCredentialsMounts(homeDir string) []specs.Mount {
 	return []specs.Mount{
 		{
 			Source:      homeDir + "/.aws/credentials",
@@ -240,14 +297,14 @@ func awsCredentialsMounts() []specs.Mount {
 	}
 }
 
-func macAgentLocation() (string, error) {
-	dirs, err := os.ReadDir("/private/tmp")
+func macAgentLocation(fs fileSystemRead, privateTempDir string) (string, error) {
+	dirs, err := fs.ReadDir(privateTempDir)
 	if err != nil {
 		return "", err
 	}
 
 	if len(dirs) < 1 {
-		return "", errors.New("no dirs found at /private/tmp")
+		return "", errors.New(fmt.Sprintf("no dirs found at %v", privateTempDir))
 	}
 
 	for _, dir := range dirs {
@@ -256,19 +313,20 @@ func macAgentLocation() (string, error) {
 		}
 	}
 
-	return "", errors.New("no dir found at /private/tmp containing com.apple.launchd")
+	return "", errors.New(fmt.Sprintf("no dir found at %v containing com.apple.launchd", privateTempDir))
 }
 
-func copyPortmap(conn context.Context, containerId string) {
-	tmpdir, err := os.MkdirTemp("", "occ_portmaps")
-	if err != nil {
-		log.Fatal("Failed to create a tempdir for portmap")
-	}
-	defer os.RemoveAll(tmpdir)
+func copyPortmap(fs fileSystemWrite, container container, copier copier, conn context.Context, containerId string) error {
 
-	data, err := containers.Inspect(conn, containerId, nil)
+	tmpdir, err := fs.MkdirTemp("", "occ_portmaps")
 	if err != nil {
-		log.Fatal("Failed to inspect container")
+		return fmt.Errorf("failed to create a tempdir for portmap: %v", err)
+	}
+	defer fs.RemoveAll(tmpdir)
+
+	data, err := container.Inspect(conn, containerId, nil)
+	if err != nil {
+		return fmt.Errorf("failed to inspect container: %v", err)
 	}
 
 	var hostPorts []string
@@ -276,15 +334,15 @@ func copyPortmap(conn context.Context, containerId string) {
 		hostPorts = append(hostPorts, host.HostPort)
 	}
 
-	portmapFile, err := os.Create(tmpdir + "/portmap")
+	portmapFile, err := fs.Create(tmpdir + "/portmap")
 	if err != nil {
-		log.Fatal("Failed to create portmap file")
+		return fmt.Errorf("failed to create portmap file: %v", err)
 	}
 
 	for _, port := range hostPorts {
-		_, err := fmt.Fprintln(portmapFile, port)
+		_, err := fs.Fprintln(portmapFile, port)
 		if err != nil {
-			log.Fatal("Failed to write host port to portmap file")
+			return fmt.Errorf("failed to write host port to portmap file: %v", err)
 		}
 	}
 
@@ -294,27 +352,28 @@ func copyPortmap(conn context.Context, containerId string) {
 		getOptions := buildahCopiah.GetOptions{
 			KeepDirectoryNames: true,
 		}
-		if err := buildahCopiah.Get("/", "", getOptions, []string{portmapFile.Name()}, writer); err != nil {
-			return fmt.Errorf("error copying portmap file from host")
+		if err := copier.Get("/", "", getOptions, []string{portmapFile.Name()}, writer); err != nil {
+			return fmt.Errorf("error copying portmap file from host: %v", err)
 		}
 		return nil
 	}
 
 	containerCopy := func() error {
 		defer reader.Close()
-		copyFunc, err := containers.CopyFromArchive(conn, containerId, "/tmp", reader)
+		copyFunc, err := container.CopyFromArchive(conn, containerId, "/tmp", reader)
 		if err != nil {
 			return err
 		}
 		if err := copyFunc(); err != nil {
-			return err
+			return fmt.Errorf("error copying portmap file to container: %v", err)
 		}
 		return nil
 	}
 
 	if err := doCopy(hostCopy, containerCopy); err != nil {
-		log.Fatal("Error copying portmap file to host.")
+		return fmt.Errorf("error copying portmap file from host to container: %v", err)
 	}
+	return nil
 }
 
 // Copied from https://github.com/containers/podman/blob/main/cmd/podman/containers/cp.go#L113
