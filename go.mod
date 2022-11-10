@@ -3,6 +3,7 @@ module github.com/openshift/occ
 go 1.18
 
 require (
+	github.com/containers/buildah v1.28.0
 	github.com/containers/podman/v4 v4.3.0
 	github.com/opencontainers/runtime-spec v1.0.3-0.20211214071223-8958f93039ab
 	github.com/sirupsen/logrus v1.9.0
@@ -31,7 +32,6 @@ require (
 	github.com/containerd/cgroups v1.0.4 // indirect
 	github.com/containerd/containerd v1.6.8 // indirect
 	github.com/containerd/stargz-snapshotter/estargz v0.12.0 // indirect
-	github.com/containers/buildah v1.28.0 // indirect
 	github.com/containers/common v0.50.1 // indirect
 	github.com/containers/image/v5 v5.23.0 // indirect
 	github.com/containers/libtrust v0.0.0-20200511145503-9c3a6c22cd9a // indirect
