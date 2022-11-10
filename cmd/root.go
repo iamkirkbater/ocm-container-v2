@@ -18,6 +18,7 @@ package cmd
 import (
 	"fmt"
 	initCmd "github.com/openshift/occ/cmd/init"
+	"github.com/openshift/occ/cmd/run"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -78,7 +79,7 @@ func NewRootCmd() *cobra.Command {
 	// Defines the logging verbosity level.  Default is set to 'warn'.
 	rootCmd.PersistentFlags().StringVarP(&verbosity, "verbosity", "v", "warn", "Log Level")
 
-	rootCmd.AddCommand(extension.NewVersionCobraCmd(), initCmd.NewInitCmd())
+	rootCmd.AddCommand(extension.NewVersionCobraCmd(), initCmd.NewInitCmd(), run.NewRunCmd())
 
 	return rootCmd
 }

@@ -20,7 +20,7 @@ func TestPrompt(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := Prompt(tc.input, bufio.NewReader(bytes.NewBufferString(tc.input)))
+			result := prompt(tc.input, bufio.NewReader(bytes.NewBufferString(tc.input)))
 			if result != tc.want {
 				t.Fatalf(`Expected "%v", got "%v"`, tc.want, result)
 			}

@@ -26,6 +26,14 @@ var (
 	DefaultConfigFileLocation string
 )
 
+const (
+	OCMUserKey            = "ocm_user"
+	OCMUrlKey             = "ocm_url"
+	OfflineAccessTokenKey = "offline_access_token"
+	OpsUtilsDirKey        = "ops_utils_dir"
+	OpsUtilsDirRWKey      = "ops_utils_dir_rw"
+)
+
 func init() {
 	// Find home directory.
 	var err error

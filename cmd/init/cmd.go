@@ -16,12 +16,8 @@ const (
 	OpsUtilsDirPrompt        = `(Optional) Provide your ops-sop/v4/utils directory.
 This is an absolute path to any necessary scripts you wish to have automatically mounted into your container.
 This is mounted in the "/root/sop_utils" directory in the container.`
-	OpsUtilsDirRwPrompt   = `Would you like the ops-sop directory to be mounted as readonly? [y/N]`
-	WaitingForUserInput   = `: `
-	OCMUserKey            = "ocm_user"
-	OfflineAccessTokenKey = "offline_access_token"
-	OpsUtilsDirKey        = "ops_utils_dir"
-	OpsUtilsDirRWKey      = "ops_utils_dir_rw"
+	OpsUtilsDirRwPrompt = `Would you like the ops-sop directory to be mounted as readonly? [y/N]`
+	WaitingForUserInput = `: `
 )
 
 func NewInitCmd() *cobra.Command {
@@ -40,7 +36,7 @@ func setupConfig(*cobra.Command, []string) {
 
 	configPath := config.Config.ConfigFileUsed()
 	if _, err := os.Stat(configPath); err == nil {
-		if value := Prompt(fmt.Sprintf("A config file already exists at %v, would you like to overwrite it? [y/N]", configPath), reader); strings.EqualFold(value, "y") {
+		if value := prompt(fmt.Sprintf("A config file already exists at %v, would you like to overwrite it? [y/N]", configPath), reader); strings.EqualFold(value, "y") {
 			fmt.Println("The configuration file will be overwritten.")
 			fmt.Println()
 		} else {
@@ -48,23 +44,23 @@ func setupConfig(*cobra.Command, []string) {
 		}
 	}
 
-	ocmUser := Prompt(OCMUsernamePrompt, reader)
-	config.Config.Set(OCMUserKey, ocmUser)
+	ocmUser := prompt(OCMUsernamePrompt, reader)
+	config.Config.Set(config.OCMUserKey, ocmUser)
 	fmt.Println()
 
-	offlineAccessToken := Prompt(OfflineAccessTokenPrompt, reader)
-	config.Config.Set(OfflineAccessTokenKey, offlineAccessToken)
+	offlineAccessToken := prompt(OfflineAccessTokenPrompt, reader)
+	config.Config.Set(config.OfflineAccessTokenKey, offlineAccessToken)
 	fmt.Println()
 
-	opsUtilsDir := Prompt(OpsUtilsDirPrompt, reader)
-	config.Config.Set(OpsUtilsDirKey, opsUtilsDir)
+	opsUtilsDir := prompt(OpsUtilsDirPrompt, reader)
+	config.Config.Set(config.OpsUtilsDirKey, opsUtilsDir)
 
 	if opsUtilsDir != "" {
 		fmt.Println()
-		if value := Prompt(OpsUtilsDirRwPrompt, reader); strings.EqualFold(value, "n") {
-			config.Config.Set(OpsUtilsDirRWKey, true)
+		if value := prompt(OpsUtilsDirRwPrompt, reader); strings.EqualFold(value, "n") {
+			config.Config.Set(config.OpsUtilsDirRWKey, true)
 		} else {
-			config.Config.Set(OpsUtilsDirRWKey, false)
+			config.Config.Set(config.OpsUtilsDirRWKey, false)
 		}
 	}
 
@@ -83,14 +79,14 @@ func setupConfig(*cobra.Command, []string) {
 		log.Fatal("Writing the config failed")
 	}
 
-	fmt.Printf("Config file has been written to %v:\n", configPath)
+	fmt.Printf("Config file has been written to %v", configPath)
 }
 
 type reader interface {
 	ReadString(byte) (string, error)
 }
 
-func Prompt(prompt string, reader reader) string {
+func prompt(prompt string, reader reader) string {
 	fmt.Println(prompt)
 	fmt.Print(WaitingForUserInput)
 	input, _ := reader.ReadString('\n')
