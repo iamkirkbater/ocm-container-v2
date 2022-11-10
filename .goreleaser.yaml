@@ -13,6 +13,14 @@ builds:
     goarch:
       - amd64
       - arm64
+    # these tags are necessary for the podman components to build cross-compiled
+    # https://github.com/containers/podman/issues/15733
+    tags:
+      - remote
+      - exclude_graphdriver_btrfs
+      - btrfs_noversion
+      - exclude_graphdriver_devicemapper
+      - containers_image_openpgp
     ldflags:
       - -s
       - -w
