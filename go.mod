@@ -5,6 +5,7 @@ go 1.18
 require (
 	github.com/containers/buildah v1.28.0
 	github.com/containers/podman/v4 v4.3.0
+	github.com/golang/mock v1.6.0
 	github.com/opencontainers/runtime-spec v1.0.3-0.20211214071223-8958f93039ab
 	github.com/sirupsen/logrus v1.9.0
 	github.com/spf13/cobra v1.6.1

@@ -1,23 +1,25 @@
 package run
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	buildahCopiah "github.com/containers/buildah/copier"
 	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/bindings/containers"
-	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/golang/mock/gomock"
 	"github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/openshift/occ/cmd/mocks"
 	"github.com/openshift/occ/pkg/config"
 	"github.com/spf13/viper"
-	"io"
 	"io/fs"
 	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
 )
+
+// TODOs:
+// 1. Look for any use of fstest and replace with gomock (maybe?)
+// 2. Look for any structs that are just implementing impls and replace with go mock (bottom of file)
 
 func init() {
 	config.Config = viper.New()
@@ -346,29 +348,136 @@ func TestMacAgentLocation(t *testing.T) {
 	}
 }
 
-func TestCopyPortMap(t *testing.T) {
+type mockData struct {
+	data  any
+	err   error
+	times int
+}
+
+func TestCopyPortmap(t *testing.T) {
 	type test struct {
 		name            string
-		fileSystemWrite fileSystemWrite
-		container       container
-		copier          copier
+		fileSystemWrite FileSystemWrite
+		mkTmpDir        mockData
+		removeAll       mockData
+		create          mockData
+		fprintln        mockData
+		container       Container
+		inspect         mockData
+		copyFromArchive mockData
+		copier          Copier
+		get             mockData
 		expected        string
 	}
 
+	inspectData := &define.InspectContainerData{
+		NetworkSettings: &define.InspectNetworkSettings{
+			Ports: map[string][]define.InspectHostPort{"9999/tcp": {{HostPort: "12345"}}},
+		},
+	}
+
+	fileInfo, err := os.Create("foo")
+	if err != nil {
+		t.Fatalf("Failed to create test file")
+	}
+
 	tests := []test{
-		{name: "Fails to create temp dir", fileSystemWrite: fsWriteFailMkdirTemp{}, expected: "failed to create a tempdir for portmap: fail"},
-		{name: "Fails to inspect container", fileSystemWrite: fsWriteTest{}, container: containerFailInspect{}, expected: "failed to inspect container: fail"},
-		{name: "Fails to create tmp portmap file", fileSystemWrite: fsWriteFailCreate{}, container: containerTest{}, expected: "failed to create portmap file: fail"},
-		{name: "Fails to write portmap data", fileSystemWrite: fsWriteFailWritePortmap{}, container: containerTest{}, expected: "failed to write host port to portmap file: fail"},
-		{name: "Fails to copy portmap file from host", fileSystemWrite: fsWriteTest{}, container: containerTest{}, copier: copierFailGet{}, expected: "error copying portmap file from host to container: 1 error occurred:\n\t* error copying portmap file from host: fail"},
-		{name: "Fails to create copy function to copy portmap file to container", fileSystemWrite: fsWriteTest{}, container: containerFailCopyFromArchive{}, copier: copierTest{}, expected: "error copying portmap file from host to container: 1 error occurred:\n\t* fail"},
-		{name: "Fails to create copy function that successfully copies portmap file to container", fileSystemWrite: fsWriteTest{}, container: containerFailCopyFromArchiveFunction{}, copier: copierTest{}, expected: "error copying portmap file from host to container: 1 error occurred:\n\t* error copying portmap file to container: fail"},
-		{name: "Successfully copies file from host to container", fileSystemWrite: fsWriteTest{}, container: containerTest{}, copier: copierTest{}},
+		{
+			name:     "Fails to create temp dir",
+			mkTmpDir: mockData{data: "", err: errors.New("fail"), times: 1},
+			fprintln: mockData{data: 0},
+			expected: "failed to create a tempdir for portmap: fail",
+		},
+		{
+			name:      "Fails to inspect Container",
+			mkTmpDir:  mockData{data: "tmpdir", times: 1},
+			removeAll: mockData{times: 1},
+			fprintln:  mockData{data: 0},
+			inspect:   mockData{err: errors.New("fail"), times: 1},
+			expected:  "failed to inspect Container: fail",
+		},
+		{
+			name:      "Fails to create tmp portmap file",
+			mkTmpDir:  mockData{data: "tmpdir", times: 1},
+			removeAll: mockData{times: 1},
+			fprintln:  mockData{data: 0},
+			inspect:   mockData{data: inspectData, times: 1},
+			create:    mockData{err: errors.New("fail"), times: 1},
+			expected:  "failed to create portmap file: fail",
+		},
+		{
+			name:      "Fails to write portmap data",
+			mkTmpDir:  mockData{data: "tmpdir", times: 1},
+			removeAll: mockData{times: 1},
+			fprintln:  mockData{data: 0, err: errors.New("fail"), times: 1},
+			inspect:   mockData{data: inspectData, times: 1},
+			create:    mockData{data: fileInfo, times: 1},
+			expected:  "failed to write host port to portmap file: fail",
+		},
+		{
+			name:            "Fails to copy portmap file from host",
+			mkTmpDir:        mockData{data: "tmpdir", times: 1},
+			removeAll:       mockData{times: 1},
+			fprintln:        mockData{data: 0, times: 1},
+			inspect:         mockData{data: inspectData, times: 1},
+			copyFromArchive: mockData{data: func() error { return nil }, err: nil, times: 1},
+			create:          mockData{data: fileInfo, times: 1},
+			get:             mockData{err: errors.New("fail"), times: 1},
+			expected:        "error copying portmap file from host to Container: 1 error occurred:\n\t* error copying portmap file from host: fail",
+		},
+		{
+			name:            "Fails to create copy function to copy portmap file to Container",
+			mkTmpDir:        mockData{data: "tmpdir", times: 1},
+			removeAll:       mockData{times: 1},
+			fprintln:        mockData{data: 0, times: 1},
+			inspect:         mockData{data: inspectData, times: 1},
+			copyFromArchive: mockData{data: func() error { return nil }, err: errors.New("fail"), times: 1},
+			create:          mockData{data: fileInfo, times: 1},
+			get:             mockData{err: nil, times: 1},
+			expected:        "error copying portmap file from host to Container: 1 error occurred:\n\t* fail",
+		},
+		{
+			name:            "Fails to create copy function that successfully copies portmap file to Container",
+			mkTmpDir:        mockData{data: "tmpdir", times: 1},
+			removeAll:       mockData{times: 1},
+			fprintln:        mockData{data: 0, times: 1},
+			inspect:         mockData{data: inspectData, times: 1},
+			copyFromArchive: mockData{data: func() error { return errors.New("fail") }, times: 1},
+			create:          mockData{data: fileInfo, times: 1},
+			get:             mockData{err: nil, times: 1},
+			expected:        "error copying portmap file from host to Container: 1 error occurred:\n\t* error copying portmap file to Container: fail",
+		},
+		{
+			name:            "Successfully copies file from host to Container",
+			mkTmpDir:        mockData{data: "tmpdir", times: 1},
+			removeAll:       mockData{times: 1},
+			fprintln:        mockData{data: 0, times: 1},
+			inspect:         mockData{data: inspectData, times: 1},
+			copyFromArchive: mockData{data: func() error { return nil }, times: 1},
+			create:          mockData{data: fileInfo, times: 1},
+			get:             mockData{err: nil, times: 1},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := copyPortmap(tc.fileSystemWrite, tc.container, tc.copier, nil, "")
+			mockCtrl := gomock.NewController(t)
+			defer mockCtrl.Finish()
+
+			mockFileSystemWrite := mocks.NewMockFileSystemWrite(mockCtrl)
+			mockFileSystemWrite.EXPECT().MkdirTemp("", "occ_portmaps").Return(tc.mkTmpDir.data, tc.mkTmpDir.err).Times(tc.mkTmpDir.times)
+			mockFileSystemWrite.EXPECT().RemoveAll("tmpdir").Return(tc.removeAll.err).Times(tc.removeAll.times)
+			mockFileSystemWrite.EXPECT().Create("tmpdir/portmap").Return(tc.create.data, tc.create.err).Times(tc.create.times)
+			mockFileSystemWrite.EXPECT().Fprintln(gomock.Any(), gomock.Any()).Return(tc.fprintln.data, tc.fprintln.err).Times(tc.fprintln.times)
+
+			mockContainer := mocks.NewMockContainer(mockCtrl)
+			mockContainer.EXPECT().Inspect(nil, "", nil).Return(tc.inspect.data, tc.inspect.err).Times(tc.inspect.times)
+			mockContainer.EXPECT().CopyFromArchive(nil, "", "/tmp", gomock.Any()).Return(tc.copyFromArchive.data, tc.copyFromArchive.err).Times(tc.copyFromArchive.times)
+
+			mockCopier := mocks.NewMockCopier(mockCtrl)
+			mockCopier.EXPECT().Get("/", "", buildahCopiah.GetOptions{KeepDirectoryNames: true}, gomock.Any(), gomock.Any()).Return(tc.get.err).Times(tc.get.times)
+
+			err := copyPortmap(mockFileSystemWrite, mockContainer, mockCopier, nil, "")
 			if tc.expected == "" && err != nil {
 				t.Fatalf("Expected no error but got %v", err)
 			}
@@ -452,103 +561,4 @@ func TestDoCopy(t *testing.T) {
 			}
 		})
 	}
-}
-
-// fileSystemWrite impls
-type fsWriteTest struct{}
-
-func (fsWriteTest) RemoveAll(string) error { return nil }
-func (fsWriteTest) Create(string) (*os.File, error) {
-	return os.Create("foo")
-}
-func (fsWriteTest) MkdirTemp(string, string) (string, error)      { return "tmpfile", nil }
-func (fsWriteTest) Fprintln(io.Writer, ...any) (n int, err error) { return 0, nil }
-
-type fsWriteFailMkdirTemp struct{}
-
-func (fsWriteFailMkdirTemp) RemoveAll(string) error                        { panic(nil) }
-func (fsWriteFailMkdirTemp) Create(string) (*os.File, error)               { panic(nil) }
-func (fsWriteFailMkdirTemp) MkdirTemp(string, string) (string, error)      { return "", errors.New("fail") }
-func (fsWriteFailMkdirTemp) Fprintln(io.Writer, ...any) (n int, err error) { panic(nil) }
-
-type fsWriteFailCreate struct{}
-
-func (fsWriteFailCreate) RemoveAll(string) error                        { return nil }
-func (fsWriteFailCreate) Create(string) (*os.File, error)               { return nil, errors.New("fail") }
-func (fsWriteFailCreate) MkdirTemp(string, string) (string, error)      { return "tmpfile", nil }
-func (fsWriteFailCreate) Fprintln(io.Writer, ...any) (n int, err error) { panic(nil) }
-
-type fsWriteFailWritePortmap struct{}
-
-func (fsWriteFailWritePortmap) RemoveAll(string) error                   { return nil }
-func (fsWriteFailWritePortmap) Create(string) (*os.File, error)          { return &os.File{}, nil }
-func (fsWriteFailWritePortmap) MkdirTemp(string, string) (string, error) { return "tmpfile", nil }
-func (fsWriteFailWritePortmap) Fprintln(io.Writer, ...any) (n int, err error) {
-	return 0, errors.New("fail")
-}
-
-// container impls
-type containerTest struct{}
-
-func (containerTest) Inspect(context.Context, string, *containers.InspectOptions) (*define.InspectContainerData, error) {
-	return &define.InspectContainerData{
-		NetworkSettings: &define.InspectNetworkSettings{
-			Ports: map[string][]define.InspectHostPort{"9999/tcp": {{HostPort: "12345"}}},
-		},
-	}, nil
-}
-func (containerTest) CopyFromArchive(context.Context, string, string, io.Reader) (entities.ContainerCopyFunc, error) {
-	return func() error {
-		return nil
-	}, nil
-}
-
-type containerFailInspect struct{}
-
-func (containerFailInspect) Inspect(context.Context, string, *containers.InspectOptions) (*define.InspectContainerData, error) {
-	return nil, errors.New("fail")
-}
-func (containerFailInspect) CopyFromArchive(context.Context, string, string, io.Reader) (entities.ContainerCopyFunc, error) {
-	panic(nil)
-}
-
-type containerFailCopyFromArchive struct{}
-
-func (containerFailCopyFromArchive) Inspect(context.Context, string, *containers.InspectOptions) (*define.InspectContainerData, error) {
-	return &define.InspectContainerData{
-		NetworkSettings: &define.InspectNetworkSettings{
-			Ports: map[string][]define.InspectHostPort{"9999/tcp": {{HostPort: "12345"}}},
-		},
-	}, nil
-}
-func (containerFailCopyFromArchive) CopyFromArchive(context.Context, string, string, io.Reader) (entities.ContainerCopyFunc, error) {
-	return nil, errors.New("fail")
-}
-
-type containerFailCopyFromArchiveFunction struct{}
-
-func (containerFailCopyFromArchiveFunction) Inspect(context.Context, string, *containers.InspectOptions) (*define.InspectContainerData, error) {
-	return &define.InspectContainerData{
-		NetworkSettings: &define.InspectNetworkSettings{
-			Ports: map[string][]define.InspectHostPort{"9999/tcp": {{HostPort: "12345"}}},
-		},
-	}, nil
-}
-func (containerFailCopyFromArchiveFunction) CopyFromArchive(context.Context, string, string, io.Reader) (entities.ContainerCopyFunc, error) {
-	return func() error {
-		return errors.New("fail")
-	}, nil
-}
-
-// copier impls
-type copierTest struct{}
-
-func (copierTest) Get(string, string, buildahCopiah.GetOptions, []string, io.Writer) error {
-	return nil
-}
-
-type copierFailGet struct{}
-
-func (copierFailGet) Get(string, string, buildahCopiah.GetOptions, []string, io.Writer) error {
-	return errors.New("fail")
 }

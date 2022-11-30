@@ -28,7 +28,7 @@ var (
 	disableConsolePort bool
 )
 
-type fileSystemWrite interface {
+type FileSystemWrite interface {
 	MkdirTemp(string, string) (string, error)
 	RemoveAll(string) error
 	Create(string) (*os.File, error)
@@ -46,7 +46,7 @@ func (osFileSystemWrite) Fprintln(w io.Writer, a ...any) (n int, err error) {
 	return fmt.Fprintln(w, a...)
 }
 
-type container interface {
+type Container interface {
 	Inspect(ctx context.Context, nameOrID string, options *containers.InspectOptions) (*define.InspectContainerData, error)
 	CopyFromArchive(ctx context.Context, nameOrID string, path string, reader io.Reader) (entities.ContainerCopyFunc, error)
 }
@@ -60,7 +60,7 @@ func (podmanContainer) CopyFromArchive(ctx context.Context, nameOrID string, pat
 	return containers.CopyFromArchive(ctx, nameOrID, path, reader)
 }
 
-type copier interface {
+type Copier interface {
 	Get(root string, directory string, options buildahCopiah.GetOptions, globs []string, bulkWriter io.Writer) error
 }
 
@@ -70,7 +70,7 @@ func (builderCopier) Get(root string, directory string, options buildahCopiah.Ge
 	return buildahCopiah.Get(root, directory, options, globs, bulkWriter)
 }
 
-type fileSystemRead interface {
+type FileSystemRead interface {
 	ReadDir(name string) ([]os.DirEntry, error)
 	Stat(name string) (fs.FileInfo, error)
 }
@@ -83,13 +83,13 @@ func (osFileSystemRead) Stat(name string) (fs.FileInfo, error)      { return os.
 func NewRunCmd() *cobra.Command {
 	var runCmd = &cobra.Command{
 		Use:   "run [cluster_id]",
-		Short: "Runs an OCM container instance",
-		Long:  `Run will start up an OCM container instance using a given configuration file.`,
+		Short: "Runs an OCM Container instance",
+		Long:  `Run will start up an OCM Container instance using a given configuration file.`,
 		Args:  cobra.MaximumNArgs(1),
 		Run:   runContainer,
 	}
 
-	runCmd.PersistentFlags().StringVarP(&exec, "exec", "e", "", "Path (in-container) to a script to run on-cluster and exit")
+	runCmd.PersistentFlags().StringVarP(&exec, "exec", "e", "", "Path (in-Container) to a script to run on-cluster and exit")
 	runCmd.PersistentFlags().StringVarP(&tag, "tag", "t", "latest", "Sets the image tag to use")
 	runCmd.PersistentFlags().BoolVarP(&disableConsolePort, "disable-console-port", "d", false, "Disable automatic cluster console port mapping")
 
@@ -114,7 +114,7 @@ func runContainer(_ *cobra.Command, args []string) {
 		log.Fatal("Error building connection to podman")
 	}
 
-	s := specgen.NewSpecGenerator("localhost/ocm-container:"+tag, false)
+	s := specgen.NewSpecGenerator("localhost/ocm-Container:"+tag, false)
 	s.Stdin = true
 	s.Terminal = true
 	s.Remove = true
@@ -125,28 +125,28 @@ func runContainer(_ *cobra.Command, args []string) {
 	createResponse, err := containers.CreateWithSpec(conn, s, nil)
 	if err != nil {
 		log.Trace(err)
-		log.Fatal("Failed to create container")
+		log.Fatal("Failed to create Container")
 	}
 
 	if err := containers.Start(conn, createResponse.ID, nil); err != nil {
 		log.Trace(err)
-		log.Fatal("Failed to start container")
+		log.Fatal("Failed to start Container")
 	}
 
 	if !disableConsolePort {
 		err := copyPortmap(osFSw, podmanContainer{}, builderCopier{}, conn, createResponse.ID)
 		if err != nil {
-			log.Fatal("There was an error copying portmap file to the container", err)
+			log.Fatal("There was an error copying portmap file to the Container", err)
 		}
 	}
 
 	err = containers.Attach(conn, createResponse.ID, os.Stdin, os.Stdout, os.Stderr, nil, nil)
 	if err != nil {
-		log.Fatal("There was an error attaching to the container", err)
+		log.Fatal("There was an error attaching to the Container", err)
 	}
 }
 
-func makeMounts(fs fileSystemRead, configPath string, homeDir string, macPrivateTempDir string, goos string) []specs.Mount {
+func makeMounts(fs FileSystemRead, configPath string, homeDir string, macPrivateTempDir string, goos string) []specs.Mount {
 	mountSlice := []specs.Mount{
 		{
 			Destination: "/root/.ssh/sockets",
@@ -297,7 +297,7 @@ func awsCredentialsMounts(homeDir string) []specs.Mount {
 	}
 }
 
-func macAgentLocation(fs fileSystemRead, privateTempDir string) (string, error) {
+func macAgentLocation(fs FileSystemRead, privateTempDir string) (string, error) {
 	dirs, err := fs.ReadDir(privateTempDir)
 	if err != nil {
 		return "", err
@@ -316,7 +316,7 @@ func macAgentLocation(fs fileSystemRead, privateTempDir string) (string, error) 
 	return "", errors.New(fmt.Sprintf("no dir found at %v containing com.apple.launchd", privateTempDir))
 }
 
-func copyPortmap(fs fileSystemWrite, container container, copier copier, conn context.Context, containerId string) error {
+func copyPortmap(fs FileSystemWrite, container Container, copier Copier, conn context.Context, containerId string) error {
 
 	tmpdir, err := fs.MkdirTemp("", "occ_portmaps")
 	if err != nil {
@@ -326,7 +326,7 @@ func copyPortmap(fs fileSystemWrite, container container, copier copier, conn co
 
 	data, err := container.Inspect(conn, containerId, nil)
 	if err != nil {
-		return fmt.Errorf("failed to inspect container: %v", err)
+		return fmt.Errorf("failed to inspect Container: %v", err)
 	}
 
 	var hostPorts []string
@@ -360,18 +360,18 @@ func copyPortmap(fs fileSystemWrite, container container, copier copier, conn co
 
 	containerCopy := func() error {
 		defer reader.Close()
-		copyFunc, err := container.CopyFromArchive(conn, containerId, "/tmp", reader)
-		if err != nil {
-			return err
+		copyFunc, copyFuncErr := container.CopyFromArchive(conn, containerId, "/tmp", reader)
+		if copyFuncErr != nil {
+			return copyFuncErr
 		}
 		if err := copyFunc(); err != nil {
-			return fmt.Errorf("error copying portmap file to container: %v", err)
+			return fmt.Errorf("error copying portmap file to Container: %v", err)
 		}
 		return nil
 	}
 
 	if err := doCopy(hostCopy, containerCopy); err != nil {
-		return fmt.Errorf("error copying portmap file from host to container: %v", err)
+		return fmt.Errorf("error copying portmap file from host to Container: %v", err)
 	}
 	return nil
 }
