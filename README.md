@@ -27,3 +27,5 @@ When contributing on MacOS, in order to build the binary you will also need the 
 ```
 brew install gpgme
 ```
+
+When building on linux, make sure to install the podman build dependencies from [podman.io/.../build-dependencies](https://podman.io/getting-started/installation#build-and-run-dependencies).
